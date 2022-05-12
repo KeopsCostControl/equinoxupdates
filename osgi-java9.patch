@@ -1,7 +1,7 @@
 From b4bfca43c5b062d01b9693076376eb0e187df0e6 Mon Sep 17 00:00:00 2001
 From: Oriol <oriol.alcaraz@xlm-aero.com>
 Date: Fri, 6 May 2022 11:45:25 +0200
-Subject: [PATCH 1/3] Profiles 8+
+Subject: [PATCH 1/4] Profiles 8+
 
 ---
  bundles/org.eclipse.osgi/JavaSE-1.8.profile   | 274 +++++++++++++++++
@@ -631,7 +631,7 @@ index 30dab6dd7..c9e048978 100644
 From b4bc26e2cf6fe1d8b6a9039e0428e269c1044a0c Mon Sep 17 00:00:00 2001
 From: Oriol <oriol.alcaraz@xlm-aero.com>
 Date: Fri, 6 May 2022 12:09:45 +0200
-Subject: [PATCH 2/3] Backport (partial) of 33ad3dfc7 - Bug 507417 [java 9]
+Subject: [PATCH 2/4] Backport (partial) of 33ad3dfc7 - Bug 507417 [java 9]
  cannot load java.* classes that are not contained in the java.base module
 
 ---
@@ -734,7 +734,7 @@ index 9ecc15b45..cf8ab54ae 100644
 From d9c53185d92ce8b3a55d7ffa88cb596dd90cae2e Mon Sep 17 00:00:00 2001
 From: Oriol <oriol.alcaraz@xlm-aero.com>
 Date: Mon, 9 May 2022 15:29:55 +0200
-Subject: [PATCH 3/3] Load classes from "java" package other than base module,
+Subject: [PATCH 3/4] Load classes from "java" package other than base module,
  in Java 9
 
 ---
@@ -754,6 +754,74 @@ index fb84e7b4c..5ff75fbb9 100644
  		try {
  			if (USE_GLOBAL_DEADLOCK_AVOIDANCE_LOCK)
  				lock(createClassLoader());
+-- 
+2.36.0
+
+
+From 78a3e8119af89e2e432c58b94680ae412a67385b Mon Sep 17 00:00:00 2001
+From: Oriol <oriol.alcaraz@xlm-aero.com>
+Date: Thu, 12 May 2022 16:31:06 +0200
+Subject: [PATCH 4/4] Try javax packages from jre
+
+---
+ .../org/eclipse/osgi/internal/loader/BundleLoader.java     | 7 ++++++-
+ .../src/org/eclipse/osgi/baseadaptor/BaseAdaptor.java      | 4 +++-
+ 2 files changed, 9 insertions(+), 2 deletions(-)
+
+diff --git a/bundles/org.eclipse.osgi/core/framework/org/eclipse/osgi/internal/loader/BundleLoader.java b/bundles/org.eclipse.osgi/core/framework/org/eclipse/osgi/internal/loader/BundleLoader.java
+index 5ff75fbb9..ca3cece6c 100644
+--- a/bundles/org.eclipse.osgi/core/framework/org/eclipse/osgi/internal/loader/BundleLoader.java
++++ b/bundles/org.eclipse.osgi/core/framework/org/eclipse/osgi/internal/loader/BundleLoader.java
+@@ -40,6 +40,7 @@ import org.osgi.framework.wiring.BundleWiring;
+ public class BundleLoader implements ClassLoaderDelegate {
+ 	public final static String DEFAULT_PACKAGE = "."; //$NON-NLS-1$
+ 	public final static String JAVA_PACKAGE = "java."; //$NON-NLS-1$
++	public final static String JAVAX_PACKAGE = "javax."; //$NON-NLS-1$
+ 	public final static byte FLAG_IMPORTSINIT = 0x01;
+ 	public final static byte FLAG_HASDYNAMICIMPORTS = 0x02;
+ 	public final static byte FLAG_HASDYNAMICEIMPORTALL = 0x04;
+@@ -433,6 +434,10 @@ public class BundleLoader implements ClassLoaderDelegate {
+ 		}
+ 	}
+ 
++	public static boolean isJavax(String name) {
++		return name.startsWith(JAVA_PACKAGE) || name.startsWith(JAVAX_PACKAGE);
++	}
++
+ 	private Class<?> findClassInternal(String name, boolean checkParent, ClassLoader parentCL) throws ClassNotFoundException {
+ 		if (Debug.DEBUG_LOADER)
+ 			Debug.println("BundleLoader[" + this + "].loadBundleClass(" + name + ")"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+@@ -796,7 +801,7 @@ public class BundleLoader implements ClassLoaderDelegate {
+ 		// follow the OSGi delegation model
+ 		// First check the parent classloader for system resources, if it is a java resource.
+ 		Enumeration<URL> result = null;
+-		if (pkgName.startsWith(JAVA_PACKAGE) || bundle.getFramework().isBootDelegationPackage(pkgName)) {
++		if (isJavax(pkgName) || bundle.getFramework().isBootDelegationPackage(pkgName)) {
+ 			// 1) if startsWith "java." delegate to parent and terminate search
+ 			// 2) if part of the bootdelegation list then delegate to parent and continue of failure
+ 			ClassLoader parentCL = getParentClassLoader();
+diff --git a/bundles/org.eclipse.osgi/defaultAdaptor/src/org/eclipse/osgi/baseadaptor/BaseAdaptor.java b/bundles/org.eclipse.osgi/defaultAdaptor/src/org/eclipse/osgi/baseadaptor/BaseAdaptor.java
+index 0c2aebb92..af045f30b 100644
+--- a/bundles/org.eclipse.osgi/defaultAdaptor/src/org/eclipse/osgi/baseadaptor/BaseAdaptor.java
++++ b/bundles/org.eclipse.osgi/defaultAdaptor/src/org/eclipse/osgi/baseadaptor/BaseAdaptor.java
+@@ -25,6 +25,7 @@ import org.eclipse.osgi.framework.internal.core.Constants;
+ import org.eclipse.osgi.framework.log.FrameworkLog;
+ import org.eclipse.osgi.framework.log.FrameworkLogEntry;
+ import org.eclipse.osgi.internal.baseadaptor.*;
++import org.eclipse.osgi.internal.loader.EquinoxContainerAdaptor;
+ import org.eclipse.osgi.service.resolver.PlatformAdmin;
+ import org.eclipse.osgi.service.resolver.State;
+ import org.eclipse.osgi.util.NLS;
+@@ -76,7 +77,8 @@ public class BaseAdaptor implements FrameworkAdaptor {
+ 		}
+ 		// default to boot classloader
+ 		if (bundleClassLoaderParent == null)
+-			bundleClassLoaderParent = new ClassLoader(Object.class.getClassLoader()) {/* boot class loader*/};
++			bundleClassLoaderParent = EquinoxContainerAdaptor.BOOT_CLASSLOADER;
++		//bundleClassLoaderParent = new ClassLoader(Object.class.getClassLoader()) {/* boot class loader*/};
+ 	}
+ 
+ 	private Framework eventPublisher;
 -- 
 2.36.0
 
